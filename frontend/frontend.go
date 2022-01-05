@@ -15,8 +15,9 @@ import (
 
 type frontend struct {
 	increment.UnimplementedIncrementServiceServer
-	replicas map[string]increment.IncrementServiceClient
-	lock     sync.Mutex
+	replicas      map[string]increment.IncrementServiceClient
+	replicasLock  sync.Mutex
+	incrementLock sync.Mutex
 }
 
 func main() {
@@ -54,7 +55,6 @@ func main() {
 }
 
 func (fe *frontend) FindReplicas() {
-	lock := sync.Mutex{}
 	wg := sync.WaitGroup{}
 
 	for i := 1000; i < 10000; i += 1000 {
@@ -79,9 +79,9 @@ func (fe *frontend) FindReplicas() {
 
 			log.Printf(">> Found server: localhost:%s", port)
 
-			lock.Lock()
+			fe.replicasLock.Lock()
 			fe.replicas[port] = increment.NewIncrementServiceClient(conn)
-			lock.Unlock()
+			fe.replicasLock.Unlock()
 		}()
 	}
 	wg.Wait()
@@ -95,8 +95,8 @@ func (fe *frontend) Heartbeat() {
 }
 
 func (fe *frontend) Increment(ctx context.Context, req *increment.Request) (*increment.Value, error) {
-	fe.lock.Lock()
-	defer fe.lock.Unlock()
+	fe.incrementLock.Lock()
+	defer fe.incrementLock.Unlock()
 
 	var finalResponse *increment.Value
 	log.Printf(">> Received Increment from client")
@@ -112,7 +112,9 @@ func (fe *frontend) Increment(ctx context.Context, req *increment.Request) (*inc
 			response, err := _replica.Increment(context.Background(), req)
 
 			if err != nil {
+				fe.replicasLock.Lock()
 				delete(fe.replicas, _port)
+				fe.incrementLock.Unlock()
 				return
 			}
 
