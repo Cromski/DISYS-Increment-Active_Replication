@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package increment;
+
+option go_package = "./increment";
+
+service IncrementService {
+  rpc increment (request) returns (value);
+}
+
+message request {
+}
+
+message value{
+  int32 value = 1;
+}
