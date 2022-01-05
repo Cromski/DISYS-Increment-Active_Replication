@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"golang.org/x/net/context"
 	"log"
 	"main/increment"
 	"net"
@@ -10,13 +9,15 @@ import (
 	"strconv"
 	"sync"
 
+	"golang.org/x/net/context"
+
 	"google.golang.org/grpc"
 )
 
 type server struct {
 	increment.UnimplementedIncrementServiceServer
 	value int32
-	lock sync.Mutex
+	lock  sync.Mutex
 }
 
 func main() {
@@ -24,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	log.Printf("Listening on port %v", *myPort)
-	lis, err := net.Listen("tcp", "localhost:" + *myPort)
+	lis, err := net.Listen("tcp", "localhost:"+*myPort)
 
 	if err != nil {
 		log.Fatalf("Failed to listen on port %v, %v", myPort, err)
@@ -38,7 +39,7 @@ func main() {
 	value, _ := strconv.ParseInt(string(data), 10, 64)
 	s.value = int32(value)
 
-	log.Printf("This is the number: %s", s.value)
+	log.Printf("Loaded current increment value from file: %v", s.value)
 
 	increment.RegisterIncrementServiceServer(grpcServer, s)
 	if err := grpcServer.Serve(lis); err != nil {

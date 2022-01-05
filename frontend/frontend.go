@@ -1,109 +1,125 @@
 package main
 
 import (
-	"flag"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 	"log"
 	"main/increment"
 	"net"
 	"strconv"
 	"sync"
 	"time"
+
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-type frontend struct{
+type frontend struct {
 	increment.UnimplementedIncrementServiceServer
 	replicas map[string]increment.IncrementServiceClient
-	lock sync.Mutex
+	lock     sync.Mutex
 }
 
-func main (){
-	var myPort = flag.String("port", "", "")
-	flag.Parse()
+func main() {
+	log.Println(">> Loading FrontEnd now... Please wait!")
 
-	log.Printf("Listening on port %v", *myPort)
-	lis, err := net.Listen("tcp", "localhost:" + *myPort)
+	lis, err := net.Listen("tcp", "localhost:9999")
+
 	if err != nil {
-		log.Fatalf("Failed to listen on port %v, %v", myPort, err)
+		log.Fatalf("Failed to listen on port 9999, %s", err)
 	}
+
+	log.Print(">> Listener registered - setting up server now...")
 
 	grpcServer := grpc.NewServer()
 
 	fe := &frontend{replicas: make(map[string]increment.IncrementServiceClient)}
-
 	fe.FindReplicas()
-
-	log.Println("we ready :)")
-
 	go fe.Heartbeat()
 
-	increment.RegisterIncrementServiceServer(grpcServer, fe)
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to server %v", err)
-	}
-}
+	log.Print("===============================================================================")
+	log.Print(" ")
+	log.Print("                      Welcome to the Incrementor Service!                      ")
+	log.Print("                                    FrontEnd                                   ")
+	log.Print("                            Running on localhost:9999                          ")
+	log.Print(" ")
+	log.Print("===============================================================================")
 
-func (fe *frontend) Connect(port int) {
-	conn, err := grpc.Dial("localhost:" + strconv.Itoa(port), grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(2*time.Second))
+	increment.RegisterIncrementServiceServer(grpcServer, fe)
+
+	err = grpcServer.Serve(lis)
 
 	if err != nil {
-		return
+		log.Fatal("Failed to serve gRPC server over port 9999")
 	}
-	fe.replicas[strconv.Itoa(port)] = increment.NewIncrementServiceClient(conn)
-	log.Printf("Found this server: %i", strconv.Itoa(port))
 }
 
-func (fe *frontend) FindReplicas () {
-
+func (fe *frontend) FindReplicas() {
+	lock := sync.Mutex{}
 	wg := sync.WaitGroup{}
 
-	for i :=  1000; i < 10000; i+=1000 {
-		if _, ok := fe.replicas[strconv.Itoa(i)]; ok {
+	for i := 1000; i < 10000; i += 1000 {
+		port := strconv.Itoa(i)
+
+		if _, ok := fe.replicas[port]; ok {
 			continue
 		}
+
 		wg.Add(1)
-		go func (port int) {
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
 			defer wg.Done()
-			conn, err := grpc.Dial("localhost:" + strconv.Itoa(port), grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(2*time.Second))
+
+			conn, err := grpc.DialContext(ctx, "localhost:"+port, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 
 			if err != nil {
 				return
 			}
-			fe.replicas[strconv.Itoa(port)] = increment.NewIncrementServiceClient(conn)
-			log.Printf("Found this server: %i", strconv.Itoa(port))
-		} (i)
+
+			log.Printf(">> Found server: localhost:%s", port)
+
+			lock.Lock()
+			fe.replicas[port] = increment.NewIncrementServiceClient(conn)
+			lock.Unlock()
+		}()
 	}
 	wg.Wait()
 }
 
-func (fe *frontend) Heartbeat (){
+func (fe *frontend) Heartbeat() {
 	for {
 		fe.FindReplicas()
-		time.Sleep(2*time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }
 
-func (fe *frontend) Increment(ctx context.Context, req *increment.Request) (*increment.Value, error){
+func (fe *frontend) Increment(ctx context.Context, req *increment.Request) (*increment.Value, error) {
 	fe.lock.Lock()
 	defer fe.lock.Unlock()
 
 	var finalResponse *increment.Value
-	log.Printf("received request %s", req)
+	log.Printf(">> Received Increment from client")
 
 	wg := sync.WaitGroup{}
 
-	for port, replica := range fe.replicas{
-		go func (_port string, _replica increment.IncrementServiceClient) {
-			wg.Add(1)
+	for port, replica := range fe.replicas {
+		wg.Add(1)
+
+		go func(_port string, _replica increment.IncrementServiceClient) {
+			defer wg.Done()
+
 			response, err := _replica.Increment(context.Background(), req)
+
 			if err != nil {
 				delete(fe.replicas, _port)
+				return
 			}
+
 			finalResponse = response
-			wg.Done()
 		}(port, replica)
 	}
+
 	wg.Wait()
 
 	return finalResponse, nil

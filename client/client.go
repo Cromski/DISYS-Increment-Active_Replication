@@ -2,18 +2,22 @@ package main
 
 import (
 	"bufio"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 	"log"
 	"main/increment"
 	"os"
 	"strconv"
 	"time"
+
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-func main(){
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	conn, err := grpc.Dial("localhost:10000", grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(2*time.Second))
+	conn, err := grpc.DialContext(ctx, "localhost:9999", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 
 	if err != nil {
 		log.Fatalf("Frontend probably not running \nNOTE: Check if frontend port is correct")
@@ -25,7 +29,7 @@ func main(){
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		if scanner.Text() == "inc"{
+		if scanner.Text() == "inc" {
 			value, err := client.Increment(context.Background(), &increment.Request{})
 			if err != nil {
 				log.Fatalf("Couldn't increase the counter")
